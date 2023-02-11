@@ -1,3 +1,6 @@
 [submodule "Sea-War"]
 	path = Sea-War
 	url = https://github.com/DmitryOb/Sea-War
+[submodule "Yalo"]
+	path = Yalo
+	url = https://github.com/DmitryOb/Yalo
