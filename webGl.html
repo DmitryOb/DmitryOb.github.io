@@ -1,0 +1,245 @@
+<!-- https://www.youtube.com/watch?v=ms1_xM2JVc0
+https://gist.github.com/vryabinin/a039c0a504150dd36051 -->
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="document-state" content="Static"/>
+		<meta http-equiv="content-language" content="ru"/>
+		<meta name="resource-type" content="document"/>
+		<meta name="description" content="Вообще о чём этот сайт"/>
+		<meta name="keywords" content="Ключевые слова через запятую"/>
+		
+		<title>WebGL</title>
+
+		<script id="shader-fs" type="x-shader/x-fragment">
+
+		precision highp float; 		//указываем точность
+		const float PI = 3.14159265359;
+
+		uniform float uTime;
+		uniform vec2 uResolution;
+
+		float random(float p){
+			return fract(sin(p)*10000.);
+		}
+
+		float noise(vec2 p) {
+			float t = uTime/2000.;
+			if (t>1.)
+				t-=floor(t);
+			return random(p.x * 14. + p.y * sin(t)*.05);
+		}
+
+		vec2 sw(vec2 p) {
+			return vec2(floor(p.x), floor(p.y));
+		}
+
+		vec2 se(vec2 p) {
+			return vec2(ceil(p.x), floor(p.y));
+		}
+
+		vec2 nw(vec2 p) {
+			return vec2(floor(p.x), ceil(p.y));
+		}
+
+		vec2 ne(vec2 p) {
+			return vec2(ceil(p.x), ceil(p.y));
+		}
+
+		float smoothNoise(vec2 p) {
+			vec2 inter = smoothstep(0., 1., fract(p));
+			float s = mix(noise(sw(p)), noise(se(p)), inter.x);
+			float n = mix(noise(nw(p)), noise(ne(p)), inter.x);
+			return mix(s, n, inter.y);
+		}
+
+		mat2 rotate(in float theta) {
+			float c = cos(theta);
+			float s = sin(theta);
+			return mat2(c, -s, s, c);
+		}
+
+		float circ(vec2 p) {
+			float r = length (p);
+			r = log(sqrt(r));
+			return abs(mod(4. * r, PI * 2.) - PI) * 3. + .2;
+		}
+
+		float fbm(in vec2 p) {
+			float z = 2.;
+			float rz = 0.;
+			vec2 bp = p;
+			for (float i = 1.; i<6.; i++) {
+				rz +=abs((smoothNoise(p)-0.5)*2.) /z ;
+				z = z * 2. ;
+				p = p * 2. ;
+			}
+			return rz;
+		}
+
+		void main() {
+			//заводим переменную с позицией текущего пикселя
+			vec2 p = gl_FragCoord.xy / uResolution.xy - .5; //2 мерный вектор х-у
+			p.x *= uResolution.x / uResolution.y;
+			p *= 15.;
+			float rz = fbm(p);
+			p /= exp(mod(uTime * 1.5, PI));
+			rz *= pow(abs(0.1 - circ(p)), .9);
+
+			vec3 col = vec3(0.2, 0.1, 0.643) / rz;
+			gl_FragColor = vec4(col, 1.0);
+		}
+
+		</script>
+
+		<script id="shader-vs" type="x-shader/x-vertex">
+
+			//середце шейдера,ф-ия которая ничего не возвращает
+			attribute vec3 aVertexPosition; //aVertexPosition атрибут : 6 вершинам
+			void main(){
+				gl_Position = vec4(aVertexPosition, 1.0); //глоб переменная с 4х-мерными координатами вершины отсечения
+									//vec4 тип данных вектора с 4 значениями
+//будем рисовать квадрат, для этого нам нужно 6 вершина: 2 треугольника с 3 вершинами
+			}
+
+		</script>
+
+		<script>
+			var canvas, gl;
+			var vertexPositionLocation;
+			var resolutionLocation, resolution;
+			var timeLocation, time;
+			var startTime;
+			//6 двумерных вершин
+			var vertices = [
+				-1.0, -1.0,
+				1.0, -1.0,
+				-1.0, 1.0,
+
+				-1.0, 1.0,
+				1.0, -1.0,
+				1.0, 1.0,
+			]
+
+			function resize(){
+				canvas.width = canvas.offsetWidth;
+				canvas.height = canvas.offsetHeight;
+				gl.viewport(0, 0, canvas.width, canvas.height); //передаем нашему gl объекту размеры если изменились
+			}
+
+			function compileShader(shaderSource, shaderType){
+				var shader = gl.createShader(shaderType); //выделели в памяти видеокарты
+				gl.shaderSource(shader, shaderSource);//закачали исходник в память
+				gl.compileShader(shader);//компилируем
+				return shader;
+			}
+
+			function getShader(id){//универсальная функция для перебора нашего фрагмент или верш шейдера
+				var shaderScript = document.getElementById(id); //выбираем наш html тэг скрипт
+				var shaderSource = '';
+				var textLine = shaderScript.firstChild; //первый ребенок нашего html тэга скрипт
+
+				while(textLine) {//исполняем пока есть содержимое у тэга скрипт
+					if (textLine.nodeType == 3) //если содержимое узла - текстовая запись
+						shaderSource += textLine.textContent; //суммируем
+					textLine = textLine.nextSibling; //следующий узел
+				}
+
+				var shader;
+				if (shaderScript.type == "x-shader/x-fragment")
+					shader = compileShader(shaderSource, gl.FRAGMENT_SHADER) //тип шейдера - константа
+				else if (shaderScript.type == "x-shader/x-vertex")
+					shader = compileShader(shaderSource, gl.VERTEX_SHADER);
+				else
+					return null;
+				return shader;
+			}
+			//рисуем цсцену
+			function drawScene(){
+				gl.uniform1f(timeLocation, time);
+				gl.uniform2fv(resolutionLocation, resolution);
+				//рисуем все треугольники наши и сообщаем кол-во, рисуем массивом
+				gl.drawArrays(gl.TRIANGLES, 0, 6); //0 - смещение, 6 - вершин
+			}
+
+			function render () {
+				//передадим сами себя - создадим петлю, высокоэффективный таймер рботает 60fps
+				//аналог SetTimeout только экономней к реурсам
+				requestAnimationFrame(render);
+				resolution = [canvas.width, canvas.height];
+				time = ( Date.now() - startTime) / 1000;
+				drawScene();
+			}
+
+			function bootstrap() {
+				canvas = document.getElementById('holder'); // в перменную канвас помещаем наш html тэг
+
+				gl = canvas.getContext('experimental-webgl'); // создаем webgl объект - gl. метод иницилазирует использование WebGL и создает объект
+				//После того, как вы  получили  WebGL контекст, вы можете его использовать для рендеринга.
+				resize();
+				window.addEventListener('resize', resize);
+
+				var fragmentShader = getShader('shader-fs');//создание фрагментного шейдера
+				var vertexShader = getShader('shader-vs');//создание врешинного шейдера
+				//на этом этапе шейдеры посланы в видеопроцессор и скомпилированы
+				//далее чтобы они работали нужно их объеденить в программу
+				var shaderProgram = gl.createProgram();
+				//закидываем в програамму шейдеру скомплирированные
+				gl.attachShader(shaderProgram, vertexShader);
+				gl.attachShader(shaderProgram, fragmentShader);
+				gl.linkProgram(shaderProgram); //линкуем программу
+				gl.useProgram(shaderProgram);
+				//удаляем шейдеры чтобы сэкономить память
+				gl.deleteShader(vertexShader);
+				gl.deleteShader(fragmentShader);
+				resolutionLocation = gl.getUniformLocation(shaderProgram, 'uResolution');
+				timeLocation = gl.getUniformLocation(shaderProgram, 'uTime');
+
+				//делаем мост - передача вершин на GPU.получаем место переменной в GPU памяти
+				//1ый параметр наша программа, 2ой имя перменной шейдера - выделяем физическое место
+				vertexPositionLocation = gl.getAttribLocation(shaderProgram, 'aVertexPosition');
+				//испльзуем концепцию как буфер - массив но в понимание видеокарты
+				var buffer = gl.createBuffer(); //созд буфер
+				gl.bindBuffer(gl.ARRAY_BUFFER, buffer);//делаем его текущим, указываем что массив
+				//записываем туда данные, передаем позиции наших треугольников и способ рисования
+				gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+				//включаем атрибуты в шейдере
+				gl.enableVertexAttribArray(vertexPositionLocation);
+				//указать парметры буфера, сколько координат читать, в каком типе передан парметр
+				gl.vertexAttribPointer(vertexPositionLocation, 2, gl.FLOAT, false, 0, 0);
+				startTime = Date.now();
+				//запускаем науш рисовалку
+				render(); // наш собственный метод
+
+			};
+		</script>
+
+		<style type="text/css">
+			body {
+				position: absolute;
+				left: 0;
+				top: 0;
+				margin: 0;
+				padding: 0;
+				width: 100%;
+				height: 100%;
+			}
+
+			canvas {
+				position: relative;
+				border: none;
+				width: 100%;
+				height: 100%;
+			}
+
+		</style>
+	</head>
+	<body onload="bootstrap();">
+		
+		<canvas id="holder"></canvas>
+		
+	</body>
+</html>
